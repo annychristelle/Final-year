@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Hotel Feedback Analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 20px;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+      }
+      th {
+        background-color: #f2f2f2;
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+      .search-bar {
+        margin-bottom: 20px;
+      }
+      #search-results {
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hotel Feedback Analytics Dashboard</h1>
+
+    <form method="POST">
+      <textarea
+        name="review"
+        rows="4"
+        cols="50"
+        placeholder="Enter a review"
+      ></textarea
+      ><br />
+      <input type="submit" value="Analyze" />
+    </form>
+
+    {% if prediction %}
+    <h2>Sentiment: {{ prediction }}</h2>
+    {% endif %} {% if category %}
+    <h2>Category: {{ category }}</h2>
+    {% endif %}
+
+    <div class="search-bar">
+      <input type="text" id="keyword" placeholder="Search reviews by keyword" />
+      <button onclick="searchReviews()">Search</button>
+    </div>
+    <div id="search-results"></div>
+
+    <h3>Sentiment Trends Over Time</h3>
+    <canvas id="sentimentTrendsChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='sentiment_trends.png') }}"
+      alt="Sentiment Trends"
+    />
+
+    <h3>Sentiment by Category</h3>
+    <canvas id="sentimentByCategoryChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='sentiment_by_category.png') }}"
+      alt="Sentiment by Category"
+    />
+
+    <h3>Top Keywords</h3>
+    <canvas id="keywordFrequencyChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='keyword_frequency.png') }}"
+      alt="Keyword Frequency"
+    />
+
+    <h3>Review Length Distribution</h3>
+    <canvas id="reviewLengthChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='review_length_distribution.png') }}"
+      alt="Review Length Distribution"
+    />
+
+    <h3>Sentiment Distribution</h3>
+    <canvas id="sentimentChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='sentiment_distribution.png') }}"
+      alt="Sentiment Distribution"
+    />
+
+    <h3>Topics in Original Reviews</h3>
+    <canvas id="topicsChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='topics_distribution.png') }}"
+      alt="Topic Distribution"
+    />
+    <table>
+      <tr>
+        <th>Topic</th>
+        <th>Key Terms</th>
+      </tr>
+      {% for topic in topics %}
+      <tr>
+        <td>{{ topic.Topic }}</td>
+        <td>{{ topic.Terms }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <h3>Anomaly Detection in User Reviews</h3>
+    <canvas id="anomaliesChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='negative_anomalies.png') }}"
+      alt="Negative Anomalies"
+    />
+    <table>
+      <tr>
+        <th>Batch</th>
+        <th>Negative Count</th>
+        <th>Z-Score</th>
+      </tr>
+      {% for anomaly in anomalies %}
+      <tr>
+        <td>{{ anomaly.Batch }}</td>
+        <td>{{ anomaly.Negative_Count }}</td>
+        <td>{{ anomaly.Z_Score }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <h3>Category Distribution</h3>
+    <canvas id="categoryChart"></canvas>
+    <img
+      src="{{ url_for('static', filename='category_distribution.png') }}"
+      alt="Category Distribution"
+    />
+
+    <h3>Keyword Cloud</h3>
+    <img
+      src="{{ url_for('static', filename='keyword_cloud.png') }}"
+      alt="Keyword Cloud"
+    />
+    <h3>Top Keywords</h3>
+    <ul>
+      {% for keyword in keywords %}
+      <li>{{ keyword.Keyword }} (Score: {{ keyword.Score }})</li>
+      {% endfor %}
+    </ul>
+
+    {% raw %}
+    <script>
+      // Sentiment Trends Chart
+      const sentimentTrendsData = {% endraw %}{{ sentiment_trends | tojson | default('{}') | safe }}{% raw %};
+      const sentimentTrendsCtx = document.getElementById('sentimentTrendsChart').getContext('2d');
+      new Chart(sentimentTrendsCtx, {
+        type: 'line',
+        data: {
+          labels: sentimentTrendsData.labels || [],
+          datasets: [
+            {
+              label: 'Positive',
+              data: sentimentTrendsData.Positive || [],
+              borderColor: '#4caf50',
+              fill: false
+            },
+            {
+              label: 'Neutral',
+              data: sentimentTrendsData.Neutral || [],
+              borderColor: '#ffeb3b',
+              fill: false
+            },
+            {
+              label: 'Negative',
+              data: sentimentTrendsData.Negative || [],
+              borderColor: '#f44336',
+              fill: false
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: { title: { display: true, text: 'Submission Number' } },
+            y: { title: { display: true, text: 'Cumulative Count' }, beginAtZero: true }
+          }
+        }
+      });
+
+      // Sentiment by Category Chart
+      const sentimentByCategoryData = {% endraw %}{{ sentiment_by_category | tojson | default('{}') | safe }}{% raw %};
+      const sentimentByCategoryCtx = document.getElementById('sentimentByCategoryChart').getContext('2d');
+      new Chart(sentimentByCategoryCtx, {
+        type: 'bar',
+        data: {
+          labels: sentimentByCategoryData.labels || [],
+          datasets: [
+            {
+              label: 'Negative',
+              data: sentimentByCategoryData.Negative || [],
+              backgroundColor: '#f44336'
+            },
+            {
+              label: 'Neutral',
+              data: sentimentByCategoryData.Neutral || [],
+              backgroundColor: '#ffeb3b'
+            },
+            {
+              label: 'Positive',
+              data: sentimentByCategoryData.Positive || [],
+              backgroundColor: '#4caf50'
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: { title: { display: true, text: 'Category' } },
+            y: { title: { display: true, text: 'Count' }, stacked: true, beginAtZero: true }
+          },
+          plugins: { legend: { display: true } }
+        }
+      });
+
+      // Keyword Frequency Chart
+      const keywordFrequencyData = {% endraw %}{{ keyword_frequency | tojson | default('{}') | safe }}{% raw %};
+      const keywordFrequencyCtx = document.getElementById('keywordFrequencyChart').getContext('2d');
+      new Chart(keywordFrequencyCtx, {
+        type: 'bar',
+        data: {
+          labels: keywordFrequencyData.labels || [],
+          datasets: [{
+            label: 'Keyword Frequency',
+            data: keywordFrequencyData.counts || [],
+            backgroundColor: '#2196f3'
+          }]
+        },
+        options: {
+          scales: {
+            x: { title: { display: true, text: 'Keyword' } },
+            y: { title: { display: true, text: 'Frequency' }, beginAtZero: true }
+          }
+        }
+      });
+
+      // Review Length Distribution Chart
+      const reviewLengthData = {% endraw %}{{ review_length_data | tojson | default('{}') | safe }}{% raw %};
+      const reviewLengthCtx = document.getElementById('reviewLengthChart').getContext('2d');
+      new Chart(reviewLengthCtx, {
+        type: 'bar',
+        data: {
+          labels: reviewLengthData.bins || [],
+          datasets: [{
+            label: 'Review Length',
+            data: reviewLengthData.counts || [],
+            backgroundColor: '#3f51b5'
+          }]
+        },
+        options: {
+          scales: {
+            x: { title: { display: true, text: 'Review Length (Words)' } },
+            y: { title: { display: true, text: 'Count' }, beginAtZero: true }
+          }
+        }
+      });
+
+      // Sentiment Chart
+      const sentimentData = {% endraw %}{{ sentiment_counts | tojson | default('{}') | safe }}{% raw %};
+      const sentimentCtx = document.getElementById('sentimentChart').getContext('2d');
+      new Chart(sentimentCtx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(sentimentData),
+          datasets: [{
+            label: 'Sentiment Count',
+            data: Object.values(sentimentData),
+            backgroundColor: ['#4caf50', '#ffeb3b', '#f44336']
+          }]
+        },
+        options: { scales: { y: { beginAtZero: true } } }
+      });
+
+      // Topics Chart
+      const topicsData = {% endraw %}{{ topics | tojson | default('[]') | safe }}{% raw %};
+      const topicsCtx = document.getElementById('topicsChart').getContext('2d');
+      new Chart(topicsCtx, {
+        type: 'bar',
+        data: {
+          labels: topicsData.length ? topicsData.map(t => t.Topic) : ['Topic 1', 'Topic 2', 'Topic 3', 'Topic 4', 'Topic 5'],
+          datasets: [{
+            label: 'Topic Weight',
+            data: topicsData.length ? topicsData.map(t => t.Weight || 0) : [0, 0, 0, 0, 0],
+            backgroundColor: '#2196f3'
+          }]
+        },
+        options: { scales: { y: { beginAtZero: true } } }
+      });
+
+      // Anomalies Chart
+      const anomaliesData = {% endraw %}{{ anomalies | tojson | default('[]') | safe }}{% raw %};
+      const anomaliesCtx = document.getElementById('anomaliesChart').getContext('2d');
+      new Chart(anomaliesCtx, {
+        type: 'scatter',
+        data: {
+          datasets: [{
+            label: 'Negative Anomalies',
+            data: anomaliesData.length ? anomaliesData.map(a => ({ x: a.Batch, y: a.Negative_Count })) : [],
+            backgroundColor: '#f44336'
+          }]
+        },
+        options: {
+          scales: {
+            x: { title: { display: true, text: 'Batch' } },
+            y: { title: { display: true, text: 'Negative Count' } }
+          }
+        }
+      });
+
+      // Category Chart
+      const categoryData = {% endraw %}{{ categories | tojson | default('{}') | safe }}{% raw %};
+      const categoryCtx = document.getElementById('categoryChart').getContext('2d');
+      new Chart(categoryCtx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            label: 'Category Count',
+            data: Object.values(categoryData),
+            backgroundColor: '#3f51b5'
+          }]
+        },
+        options: { scales: { y: { beginAtZero: true } } }
+      });
+
+      // Keyword Search Function
+      function searchReviews() {
+        const keyword = document.getElementById('keyword').value;
+        if (!keyword.trim()) {
+          document.getElementById('search-results').innerHTML = '<p>Please enter a keyword.</p>';
+          return;
+        }
+        fetch('/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `keyword=${encodeURIComponent(keyword)}`
+        })
+          .then(response => {
+            if (!response.ok) throw new Error('Search request failed');
+            return response.json();
+          })
+          .then(data => {
+            const resultsDiv = document.getElementById('search-results');
+            resultsDiv.innerHTML = '';
+            if (!data.reviews || data.reviews.length === 0) {
+              resultsDiv.innerHTML = '<p>No reviews found.</p>';
+              return;
+            }
+            const ul = document.createElement('ul');
+            data.reviews.forEach(review => {
+              const li = document.createElement('li');
+              li.textContent = `Review: ${review.Cleaned_Review} | Sentiment: ${review.Sentiment} | Category: ${review.Category}`;
+              ul.appendChild(li);
+            });
+            resultsDiv.appendChild(ul);
+          })
+          .catch(error => {
+            console.error('Search error:', error);
+            document.getElementById('search-results').innerHTML = '<p>Error performing search.</p>';
+          });
+      }
+    </script>
+    {% endraw %}
+  </body>
+</html>
