@@ -1,55 +1,107 @@
-from flask import Flask, request, render_template, jsonify
-import pandas as pd
-import numpy as np
-import joblib
-import re
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-import nltk
-import spacy
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 from flask_mail import Mail, Message
 import os
+import re
+import joblib
+import numpy as np
+import pandas as pd
 from collections import Counter
 import logging
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from dotenv import load_dotenv
+from supabase import create_client
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Load environment variables
+load_dotenv()
 
+# Flask Setup
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key'
+CORS(app)
+
 app.config.update(
+    SECRET_KEY=os.getenv("SECRET_KEY", "your-secret-key"),
     MAIL_SERVER='smtp.gmail.com',
     MAIL_PORT=587,
     MAIL_USE_TLS=True,
-    MAIL_USERNAME='your-email@gmail.com',  # Replace with your Gmail
-    MAIL_PASSWORD='your-app-password'      # Replace with your App Password
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD")
 )
 mail = Mail(app)
 
-# Load models and data
-try:
-    model = joblib.load('sentiment_model.pkl')
-    vectorizer = joblib.load('tfidf_vectorizer.pkl')
-    nlp_classifier = joblib.load('category_classifier.pkl')
-    topics_df = pd.read_csv('topics.csv')
-    anomalies_df = pd.read_csv('anomalies.csv')
-    keywords_df = pd.read_csv('keywords.csv')
-    categorized_df = pd.read_csv('categorized_reviews.csv')
-    logger.info("Loaded models and static data files")
-except FileNotFoundError as e:
-    logger.error(f"Required file not found: {e}. Run train_model.py and related scripts first.")
-    exit(1)
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-nltk.download('punkt', quiet=True)
-nltk.download('stopwords', quiet=True)
+# Supabase Setup
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Load AI models
+model = joblib.load('sentiment_model.pkl')
+vectorizer = joblib.load('tfidf_vectorizer.pkl')
+nlp_classifier = joblib.load('category_classifier.pkl')
+
+# -------------------------
+# TEXT PROCESSING FUNCTIONS
+# -------------------------
+
+def load_initial_data():
+    logger.info("Checking and loading initial data from CSVs into Supabase if needed...")
+
+    dataset_config = {
+        "topics": "topics.csv",
+        "anomalies": "anomalies.csv",
+        "keywords": "keywords.csv",
+        "feedback": "user_reviews.csv"
+    }
+
+    for table, csv_file in dataset_config.items():
+        try:
+            existing = supabase.table(table).select("*").limit(1).execute()
+            if existing.data and len(existing.data) > 0:
+                logger.info(f"✅ Table '{table}' already has data. Skipping CSV import.")
+                continue
+
+            if not os.path.exists(csv_file):
+                logger.warning(f"⚠️ CSV file '{csv_file}' not found. Skipping...")
+                continue
+
+            df = pd.read_csv(csv_file)
+            df.columns = [col.strip().lower() for col in df.columns]
+
+            if table == "topics":
+                df.columns = ["topic", "terms", "weight"]
+                df["weight"] = df["weight"].astype(float)
+
+            elif table == "anomalies":
+                df.columns = ["batch", "negative_count", "z_score"]
+                df["z_score"] = df["z_score"].astype(float)
+
+            elif table == "keywords":
+                df.columns = ["keyword", "score"]
+                df["score"] = df["score"].astype(float)
+
+            elif table == "feedback":
+                df.columns = ["cleaned_review", "sentiment", "category", "review_length"]
+                df["review_length"] = df["review_length"].astype(int)
+                df['original_review'] = df['cleaned_review']
+
+            records = df.to_dict(orient="records")
+            if records:
+                supabase.table(table).insert(records).execute()
+                logger.info(f"✅ Inserted {len(records)} records into '{table}' from '{csv_file}'.")
+
+        except Exception as e:
+            logger.error(f"❌ Error processing table '{table}': {e}")
 
 def clean_text(text):
     text = text.lower()
     text = re.sub(r'[^a-z\s]', '', text)
     tokens = word_tokenize(text)
-    stop_words = set(stopwords.words('english'))
-    tokens = [t for t in tokens if t not in stop_words]
+    tokens = [t for t in tokens if t not in set(stopwords.words('english'))]
     return ' '.join(tokens)
 
 def classify_category(review):
@@ -58,133 +110,89 @@ def classify_category(review):
 
 def send_alert(z_score, identifier, type='batch'):
     if z_score > 2:
-        msg = Message('Feedback Alert', sender='your-email@gmail.com', recipients=['manager@example.com'])
-        msg.body = f'{type.capitalize()} anomaly detected in {type} {identifier} with Z-score {z_score:.2f}'
+        msg = Message('Feedback Alert', sender=os.getenv("MAIL_USERNAME"), recipients=['manager@example.com'])
+        msg.body = f'{type.capitalize()} anomaly detected: {identifier} (Z-score: {z_score:.2f})'
         try:
             mail.send(msg)
-            logger.info(f"Alert sent for {type} {identifier}")
+            logger.info(f"Sent alert for {identifier}")
         except Exception as e:
-            logger.error(f"Error sending alert: {e}")
+            logger.error(f"Email failed: {e}")
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    prediction = None
-    category = None
-    user_reviews_file = 'user_reviews.csv'
-    if os.path.exists(user_reviews_file):
-        try:
-            user_reviews_df = pd.read_csv(user_reviews_file)
-            logger.info(f"Loaded {len(user_reviews_df)} user reviews")
-        except Exception as e:
-            logger.error(f"Error loading {user_reviews_file}: {e}")
-            user_reviews_df = pd.DataFrame(columns=['Cleaned_Review', 'Sentiment', 'Category', 'Review_Length'])
-    else:
-        logger.warning("No user_reviews.csv found")
-        user_reviews_df = pd.DataFrame(columns=['Cleaned_Review', 'Sentiment', 'Category', 'Review_Length'])
+# -------------------------
+# ROUTES
+# -------------------------
 
-    if request.method == 'POST':
-        review = request.form.get('review')
-        if review:
-            cleaned_review = clean_text(review)
-            X = vectorizer.transform([cleaned_review])
-            prediction = model.predict(X)[0]
-            category = classify_category(cleaned_review)
-            review_length = len(cleaned_review.split())
-            
-            new_review = pd.DataFrame({
-                'Cleaned_Review': [cleaned_review],
-                'Sentiment': [prediction],
-                'Category': [category],
-                'Review_Length': [review_length]
-            })
-            user_reviews_df = pd.concat([user_reviews_df, new_review], ignore_index=True)
-            try:
-                user_reviews_df.to_csv(user_reviews_file, index=False)
-                logger.info("Saved new review to user_reviews.csv")
-            except Exception as e:
-                logger.error(f"Error saving to {user_reviews_file}: {e}")
-            
-            for _, row in anomalies_df.iterrows():
-                send_alert(row['Z_Score'], row['Batch'], 'batch')
+@app.route('/api/predict', methods=['POST'])
+def predict_feedback():
+    data = request.get_json()
+    if not data or 'review' not in data:
+        return jsonify({'error': 'Missing review text'}), 400
 
-    # Compute data for charts
-    sentiment_counts = user_reviews_df['Sentiment'].value_counts().to_dict()
-    categories = user_reviews_df['Category'].value_counts().to_dict()
+    review = data['review']
+    cleaned = clean_text(review)
+    X = vectorizer.transform([cleaned])
+    sentiment = model.predict(X)[0]
+    category = classify_category(cleaned)
+    length = len(cleaned.split())
 
-    # Sentiment Trends
-    sentiment_trends = {'labels': [], 'Positive': [], 'Neutral': [], 'Negative': []}
-    if not user_reviews_df.empty:
-        user_reviews_df['Submission'] = user_reviews_df.index
-        submissions = user_reviews_df['Submission'].unique()
-        for sentiment in ['Positive', 'Neutral', 'Negative']:
-            sentiment_df = user_reviews_df[user_reviews_df['Sentiment'] == sentiment]
-            cumsum = sentiment_df.groupby('Submission').size().cumsum().reindex(submissions, fill_value=0)
-            sentiment_trends[sentiment] = cumsum.tolist()
-        sentiment_trends['labels'] = submissions.tolist()
-    logger.info("Prepared sentiment_trends data")
+    return jsonify({
+        "original_review": review,
+        "cleaned_review": cleaned,
+        "sentiment": sentiment,
+        "category": category,
+        "review_length": length
+    }), 200
 
-    # Sentiment by Category
-    sentiment_by_category = {'labels': [], 'Positive': [], 'Neutral': [], 'Negative': []}
-    if not user_reviews_df.empty and 'Category' in user_reviews_df.columns:
-        pivot = user_reviews_df.pivot_table(index='Category', columns='Sentiment', aggfunc='size', fill_value=0)
-        sentiment_by_category['labels'] = pivot.index.tolist()
-        for sentiment in ['Positive', 'Neutral', 'Negative']:
-            sentiment_by_category[sentiment] = pivot.get(sentiment, pd.Series(0, index=pivot.index)).tolist()
-    logger.info("Prepared sentiment_by_category data")
+@app.route('/api/submit-review', methods=['POST'])
+def submit_review():
+    data = request.get_json()
+    if not data or 'review' not in data:
+        return jsonify({'error': 'Missing review field'}), 400
 
-    # Keyword Frequency
-    keyword_frequency = {'labels': [], 'counts': []}
-    if not user_reviews_df.empty:
-        text = ' '.join(user_reviews_df['Cleaned_Review'].astype(str).str.lower())
-        tokens = word_tokenize(text)
-        stop_words = set(stopwords.words('english'))
-        tokens = [t for t in tokens if t not in stop_words]
-        keyword_counts = Counter(tokens)
-        top_keywords = dict(sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)[:10])
-        keyword_frequency['labels'] = list(top_keywords.keys())
-        keyword_frequency['counts'] = list(top_keywords.values())
-    logger.info("Prepared keyword_frequency data")
+    review = data['review']
+    cleaned = clean_text(review)
+    X = vectorizer.transform([cleaned])
+    sentiment = model.predict(X)[0]
+    category = classify_category(cleaned)
+    length = len(cleaned.split())
 
-    # Review Length Distribution
-    review_length_data = {'bins': [], 'counts': []}
-    if not user_reviews_df.empty:
-        bins = np.histogram(user_reviews_df['Review_Length'], bins=20)[1].astype(int)
-        counts = np.histogram(user_reviews_df['Review_Length'], bins=20)[0].tolist()
-        review_length_data['bins'] = bins[:-1].tolist()
-        review_length_data['counts'] = counts
-    logger.info("Prepared review_length_data")
+    try:
+        supabase.table("feedback").insert({
+            "original_review": review,
+            "cleaned_review": cleaned,
+            "sentiment": sentiment,
+            "category": category,
+            "review_length": length
+        }).execute()
+    except Exception as e:
+        logger.error(f"Error saving to Supabase: {e}")
+        return jsonify({'error': 'Failed to save review'}), 500
 
-    return render_template('index.html',
-                          prediction=prediction,
-                          category=category,
-                          topics=topics_df.to_dict('records'),
-                          anomalies=anomalies_df.to_dict('records'),
-                          keywords=keywords_df.to_dict('records'),
-                          sentiment_counts=sentiment_counts,
-                          categories=categories,
-                          sentiment_trends=sentiment_trends,
-                          sentiment_by_category=sentiment_by_category,
-                          keyword_frequency=keyword_frequency,
-                          review_length_data=review_length_data)
+    return jsonify({
+        "original_review": review,
+        "cleaned_review": cleaned,
+        "sentiment": sentiment,
+        "category": category,
+        "review_length": length
+    }), 200
 
-@app.route('/search', methods=['POST'])
-def search():
-    keyword = request.form.get('keyword').lower()
-    if keyword:
-        user_reviews_file = 'user_reviews.csv'
-        if os.path.exists(user_reviews_file):
-            try:
-                user_reviews_df = pd.read_csv(user_reviews_file)
-                filtered_reviews = user_reviews_df[user_reviews_df['Cleaned_Review'].str.contains(keyword, case=False, na=False)]
-                logger.info(f"Found {len(filtered_reviews)} reviews for keyword '{keyword}'")
-                return jsonify({'reviews': filtered_reviews[['Cleaned_Review', 'Sentiment', 'Category']].to_dict('records')})
-            except Exception as e:
-                logger.error(f"Error searching {user_reviews_file}: {e}")
-                return jsonify({'reviews': []})
-        logger.warning("No user_reviews.csv for search")
-        return jsonify({'reviews': []})
-    logger.warning("Empty keyword in search")
-    return jsonify({'reviews': []})
+@app.route('/api/insights', methods=['GET'])
+def get_insights():
+    load_initial_data()
+    return jsonify({'message': 'Data loading triggered'}), 200
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return "OK", 200
+
+# -------------------------
+# STARTUP
+# -------------------------
+
+def ensure_supabase_tables():
+    logger.info("NOTE: Supabase table creation should be done manually or via SQL scripts.")
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    ensure_supabase_tables()
+    load_initial_data()
+    app.run(debug=True, host='0.0.0.0', port=5000)
