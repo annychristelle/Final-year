@@ -1,11 +1,6 @@
 services:
-  - type: web
-    name: final-year
-    env: python
-    plan: free
-    pythonVersion: 3.12
-    buildCommand: |
-      apt-get update
-      apt-get install -y gfortran libopenblas-dev liblapack-dev build-essential
-      pip install --no-cache-dir -r requirements.txt
-    startCommand: python app.py
+       - type: web
+         name: final-year
+         env: docker
+         plan: free
+         dockerfilePath: ./Dockerfile
