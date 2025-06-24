@@ -1,0 +1,11 @@
+name: myenv
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy=1.26.4
+  - scipy=1.11.4
+  - pip
+  - pip:
+      - -r requirements.txt
