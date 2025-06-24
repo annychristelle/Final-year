@@ -117,3 +117,4 @@ Wikipedia-API==0.8.1
 wordcloud==1.9.3
 wrapt==1.17.2
 gunicorn==22.0.0
+flask-cors==4.0.0
