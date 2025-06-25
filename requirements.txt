@@ -78,7 +78,6 @@ requests==2.32.3
 rich==14.0.0
 s3transfer==0.13.0
 safetensors==0.5.3
-scikit-learn==1.5.0
 scipy==1.11.4
 seaborn==0.13.2
 segtok==1.5.11
