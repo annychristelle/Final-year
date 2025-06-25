@@ -195,4 +195,8 @@ def ensure_supabase_tables():
 if __name__ == '__main__':
     ensure_supabase_tables()
     load_initial_data()
-  app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))
+if __name__ == '__main__':
+    ensure_supabase_tables()
+    load_initial_data()
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))
+
