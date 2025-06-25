@@ -119,3 +119,4 @@ python-dotenv==1.0.1
 wrapt==1.17.2
 gunicorn==22.0.0
 flask-cors==4.0.0
+supabase==1.0.3
