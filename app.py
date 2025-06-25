@@ -122,6 +122,10 @@ def send_alert(z_score, identifier, type='batch'):
 # ROUTES
 # -------------------------
 
+@app.route('/', methods=['GET'])
+def home():
+    return "✅ The AI Feedback API is running!", 200
+
 @app.route('/api/predict', methods=['POST'])
 def predict_feedback():
     data = request.get_json()
@@ -195,8 +199,4 @@ def ensure_supabase_tables():
 if __name__ == '__main__':
     ensure_supabase_tables()
     load_initial_data()
-if __name__ == '__main__':
-    ensure_supabase_tables()
-    load_initial_data()
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))
-
